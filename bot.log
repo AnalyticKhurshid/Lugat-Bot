@@ -1,0 +1,34 @@
+2025-08-04 11:00:39,165 - INFO - Yuklangan lug'atlar: 4, grammatika bo'limlari: 5
+2025-08-04 11:00:39,165 - INFO - Botni ishga tushirish urinishi: 1/3
+2025-08-04 11:00:39,165 - INFO - Start polling
+2025-08-04 11:00:39,662 - INFO - Run polling for bot @lugattekshirbot id=7034361224 - "Lug'at Tekshir Bot"
+2025-08-04 11:00:39,792 - INFO - Foydalanuvchi yangilandi: ID=1047421689, Username=@programist_tuit, Oxirgi faol: 2025-08-04T11:00:39.792985
+2025-08-04 11:00:40,189 - INFO - Update id=844815211 is handled. Duration 406 ms by bot id=7034361224
+2025-08-04 11:00:47,400 - INFO - Update id=844815212 is handled. Duration 156 ms by bot id=7034361224
+2025-08-04 11:00:48,742 - INFO - Update id=844815213 is handled. Duration 171 ms by bot id=7034361224
+2025-08-04 11:00:51,587 - INFO - Update id=844815214 is handled. Duration 156 ms by bot id=7034361224
+2025-08-04 11:00:53,247 - INFO - Foydalanuvchi yangilandi: ID=1047421689, Username=@programist_tuit, Oxirgi faol: 2025-08-04T11:00:53.247545
+2025-08-04 11:00:53,396 - INFO - Update id=844815215 is handled. Duration 156 ms by bot id=7034361224
+2025-08-04 11:00:54,386 - INFO - Foydalanuvchi yangilandi: ID=1047421689, Username=@programist_tuit, Oxirgi faol: 2025-08-04T11:00:54.386529
+2025-08-04 11:00:54,550 - INFO - Update id=844815216 is handled. Duration 172 ms by bot id=7034361224
+2025-08-04 11:00:55,371 - INFO - Foydalanuvchi yangilandi: ID=1047421689, Username=@programist_tuit, Oxirgi faol: 2025-08-04T11:00:55.371349
+2025-08-04 11:00:55,505 - INFO - Update id=844815217 is handled. Duration 141 ms by bot id=7034361224
+2025-08-04 11:00:56,254 - INFO - Foydalanuvchi yangilandi: ID=1047421689, Username=@programist_tuit, Oxirgi faol: 2025-08-04T11:00:56.254796
+2025-08-04 11:00:56,413 - INFO - Update id=844815218 is handled. Duration 172 ms by bot id=7034361224
+2025-08-04 11:00:57,270 - INFO - Foydalanuvchi yangilandi: ID=1047421689, Username=@programist_tuit, Oxirgi faol: 2025-08-04T11:00:57.270410
+2025-08-04 11:00:57,459 - INFO - Update id=844815219 is handled. Duration 203 ms by bot id=7034361224
+2025-08-04 11:00:59,333 - INFO - Foydalanuvchi yangilandi: ID=1047421689, Username=@programist_tuit, Oxirgi faol: 2025-08-04T11:00:59.333690
+2025-08-04 11:00:59,496 - INFO - Update id=844815220 is handled. Duration 171 ms by bot id=7034361224
+2025-08-04 11:01:34,223 - INFO - Update id=844815221 is handled. Duration 233 ms by bot id=7034361224
+2025-08-04 11:01:38,824 - INFO - Update id=844815222 is handled. Duration 140 ms by bot id=7034361224
+2025-08-04 11:01:40,052 - INFO - Update id=844815223 is handled. Duration 188 ms by bot id=7034361224
+2025-08-04 11:01:40,892 - INFO - Foydalanuvchi yangilandi: ID=1047421689, Username=@programist_tuit, Oxirgi faol: 2025-08-04T11:01:40.892637
+2025-08-04 11:01:41,039 - INFO - Update id=844815224 is handled. Duration 156 ms by bot id=7034361224
+2025-08-04 11:01:44,369 - INFO - Foydalanuvchi yangilandi: ID=1047421689, Username=@programist_tuit, Oxirgi faol: 2025-08-04T11:01:44.369377
+2025-08-04 11:01:44,871 - INFO - Fikr yuborildi: ID=1047421689, Username=@programist_tuit, Xabar=salom
+2025-08-04 11:01:44,871 - INFO - Update id=844815225 is handled. Duration 500 ms by bot id=7034361224
+2025-08-04 11:01:52,410 - INFO - Polling stopped
+2025-08-04 11:01:52,410 - ERROR - Failed to fetch updates - TelegramNetworkError: HTTP Client says - ServerDisconnectedError: Server disconnected
+2025-08-04 11:01:52,410 - WARNING - Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 7034361224)
+2025-08-04 11:01:52,672 - INFO - Polling stopped for bot @lugattekshirbot id=7034361224 - "Lug'at Tekshir Bot"
+2025-08-04 11:01:52,673 - INFO - Bot foydalanuvchi tomonidan to‘xtatildi
