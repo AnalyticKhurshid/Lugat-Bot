@@ -2,6 +2,7 @@ import json
 import os
 import random
 import asyncio
+import logging
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -9,9 +10,26 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import CommandStart, Command
-from config import TOKEN, ADMIN_ID, TIME_LIMIT
+from aiogram.exceptions import TelegramNetworkError
+from aiogram.utils.executor import start_webhook
+import aiohttp
 
-# Bot va Dispatcher sozlamalari
+# Logging sozlamalari
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Bot sozlamalari
+TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_PATH = "/webhook"
+WEBAPP_HOST = "0.0.0.0"
+WEBAPP_PORT = int(os.getenv("PORT", 8080))
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
@@ -27,8 +45,11 @@ def load_data():
             dict_names = list(dictionary_data.keys())
             for dict_name in dict_names:
                 data["Dictionary"][dict_name] = dictionary_data[dict_name]
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"dictionary.json yuklashda xato: {e}")
+    except FileNotFoundError:
+        logger.error("dictionary.json fayli topilmadi")
+        return None, [], []
+    except json.JSONDecodeError as e:
+        logger.error(f"dictionary.json faylini dekodlashda xato: {e}")
         return None, [], []
     
     try:
@@ -37,14 +58,19 @@ def load_data():
             grammar_names = list(grammar_data.keys())
             for grammar_name in grammar_names:
                 data["Grammar"][grammar_name] = grammar_data[grammar_name]
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"grammar.json yuklashda xato: {e}")
+    except FileNotFoundError:
+        logger.warning("grammar.json fayli topilmadi, bo'sh Grammar ma'lumotlari ishlatiladi")
+        data["Grammar"] = {}
+    except json.JSONDecodeError as e:
+        logger.error(f"grammar.json faylini dekodlashda xato: {e}")
         data["Grammar"] = {}
     
+    logger.info(f"Yuklangan lug'atlar: {len(dict_names)}, grammatika bo'limlari: {len(grammar_names)}")
     return data, dict_names, grammar_names
 
 DATA, DICT_NAMES, GRAMMAR_NAMES = load_data()
 if DATA is None:
+    logger.critical("Ma'lumot fayllari yuklanmadi!")
     raise Exception("Ma'lumot fayllari yuklanmadi!")
 
 # Konstantalar
@@ -59,6 +85,8 @@ LEVEL_EMOJIS = {
     "Hard": "🔥"
 }
 ITEMS_PER_PAGE = 10
+TIME_LIMIT = int(os.getenv("TIME_LIMIT", 30))  # Default to 30 if not set
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))  # Set your admin ID in Render environment variables
 
 # Holatlar
 class QuizStates(StatesGroup):
@@ -81,14 +109,14 @@ class LearningStates(StatesGroup):
 class AdminStates(StatesGroup):
     waiting_for_message = State()
 
-class FeedbackStates(StatesGroup):  # Yangi holat sinfi
+class FeedbackStates(StatesGroup):
     waiting_for_feedback = State()
 
 # Dinamik klaviaturalar
 def get_main_menu(is_admin=False, has_wrong_answers=False):
     keyboard = [
         [KeyboardButton(text="🚀 Quiz boshlash"), KeyboardButton(text="📚 O‘quv rejimi")],
-        [KeyboardButton(text="ℹ️ Bot haqida"), KeyboardButton(text="📬 Fikr yuborish")],  # Yangi tugma
+        [KeyboardButton(text="ℹ️ Bot haqida"), KeyboardButton(text="📬 Fikr yuborish")],
     ]
     if has_wrong_answers:
         keyboard.append([KeyboardButton(text="🔄 Xatolarni tuzatish")])
@@ -199,42 +227,46 @@ CONFIRM_END_MARKUP = ReplyKeyboardMarkup(
     resize_keyboard=True, one_time_keyboard=True
 )
 
-# Foydalanuvchilarni saqlash uchun funksiya
-async def save_user(user_id, username):
+# Foydalanuvchilarni saqlash
+async def save_user(user_id: int, username: str):
     users = await load_json('users.json', [])
     user = next((u for u in users if u['id'] == user_id), None)
     current_time = datetime.now().isoformat()
+    
     if user:
-        user['username'] = username or user.get('username', 'Noma’lum')
+        user['username'] = username or user.get('username', 'Nomalum')
         user['last_active'] = current_time
-        print(f"[INFO] Foydalanuvchi yangilandi: ID={user_id}, Username=@{username or 'Noma’lum'}, Oxirgi faol: {current_time}")
+        logger.info(f"Foydalanuvchi yangilandi: ID={user_id}, Username=@{username or 'Nomalum'}, Oxirgi faol: {current_time}")
     else:
         new_user = {
             'id': user_id,
-            'username': username or 'Noma’lum',
+            'username': username or 'Nomalum',
             'last_active': current_time
         }
         users.append(new_user)
-        print(f"[INFO] Yangi foydalanuvchi saqlandi: ID={user_id}, Username=@{username or 'Noma’lum'}, Oxirgi faol: {current_time}")
+        logger.info(f"Yangi foydalanuvchi saqlandi: ID={user_id}, Username=@{username or 'Nomalum'}, Oxirgi faol: {current_time}")
+    
     await save_to_json('users.json', users)
 
 # Fayl bilan ishlash
-async def save_to_json(filename, data):
+async def save_to_json(filename: str, data: list):
     try:
         async with asyncio.Lock():
             with open(filename, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.debug(f"{filename} fayliga ma'lumot saqlandi")
     except Exception as e:
-        print(f"[ERROR] {filename} saqlashda xato: {e}")
+        logger.error(f"{filename} saqlashda xato: {e}")
 
-async def load_json(filename, default=None):
+async def load_json(filename: str, default=None):
     try:
         if os.path.exists(filename):
             with open(filename, 'r', encoding='utf-8') as f:
                 return json.load(f)
+        logger.warning(f"{filename} fayli topilmadi, default qiymat ishlatiladi")
         return default or []
     except Exception as e:
-        print(f"[ERROR] {filename} yuklashda xato: {e}")
+        logger.error(f"{filename} yuklashda xato: {e}")
         return default or []
 
 # Taymer
@@ -273,7 +305,8 @@ async def start_handler(message: types.Message, state: FSMContext):
         "<b>🌟 Quiz botga xush kelibsiz! 🌟</b>\n\n"
         "Bu yerda bilimingizni sinab ko‘rishingiz yoki o‘rganishingiz mumkin!\n"
         "👇 Quyidagi tugmalardan birini tanlang:",
-        reply_markup=get_main_menu(message.from_user.id == ADMIN_ID), parse_mode="HTML"
+        reply_markup=get_main_menu(user_id == ADMIN_ID),
+        parse_mode="HTML"
     )
 
 @dp.message(lambda msg: msg.text == "ℹ️ Bot haqida")
@@ -288,7 +321,7 @@ async def about_bot(message: types.Message):
         parse_mode="HTML"
     )
 
-@dp.message(lambda msg: msg.text == "📬 Fikr yuborish")  # Yangi handler
+@dp.message(lambda msg: msg.text == "📬 Fikr yuborish")
 async def feedback_start(message: types.Message, state: FSMContext):
     await save_user(message.from_user.id, message.from_user.username)
     await message.answer(
@@ -302,7 +335,7 @@ async def feedback_start(message: types.Message, state: FSMContext):
     )
     await state.set_state(FeedbackStates.waiting_for_feedback)
 
-@dp.message(FeedbackStates.waiting_for_feedback)  # Yangi handler
+@dp.message(FeedbackStates.waiting_for_feedback)
 async def save_feedback(message: types.Message, state: FSMContext):
     await save_user(message.from_user.id, message.from_user.username)
     if message.text == "↩️ Orqaga":
@@ -311,7 +344,7 @@ async def save_feedback(message: types.Message, state: FSMContext):
     
     feedback_text = message.text
     user_id = message.from_user.id
-    username = message.from_user.username or "Noma’lum"
+    username = message.from_user.username or "Nomalum"
     
     try:
         await bot.send_message(
@@ -323,16 +356,16 @@ async def save_feedback(message: types.Message, state: FSMContext):
         )
         await message.answer(
             "<b>✅ Fikringiz yuborildi, rahmat!</b>",
-            reply_markup=get_main_menu(message.from_user.id == ADMIN_ID),
+            reply_markup=get_main_menu(user_id == ADMIN_ID),
             parse_mode="HTML"
         )
-        print(f"[INFO] Fikr yuborildi: ID={user_id}, Username=@{username}, Xabar={feedback_text}")
+        logger.info(f"Fikr yuborildi: ID={user_id}, Username=@{username}, Xabar={feedback_text}")
     except Exception as e:
         await message.answer(
             "<b>❌ Fikr yuborishda xato yuz berdi, qaytadan urinib ko‘ring!</b>",
             parse_mode="HTML"
         )
-        print(f"[ERROR] Fikr yuborishda xato: ID={user_id}, Xato={str(e)}")
+        logger.error(f"Fikr yuborishda xato: ID={user_id}, Xato={e}")
     
     await state.clear()
 
@@ -341,7 +374,8 @@ async def admin_panel(message: types.Message, state: FSMContext):
     await message.answer(
         "<b>🛠 Admin paneli</b>\n\n"
         "👇 Quyidagi amallarni bajarishingiz mumkin:",
-        reply_markup=ADMIN_MARKUP, parse_mode="HTML"
+        reply_markup=ADMIN_MARKUP,
+        parse_mode="HTML"
     )
     await state.clear()
 
@@ -350,19 +384,24 @@ async def show_users(message: types.Message):
     users = await load_json('users.json', [])
     if not users:
         await message.answer("<b>👤 Hozircha foydalanuvchilar yo‘q!</b>", reply_markup=ADMIN_MARKUP, parse_mode="HTML")
-    else:
-        user_list = "\n".join(
-            f"👤 ID: {u['id']} | @{u['username']} | Oxirgi faol: {u.get('last_active', 'Noma’lum')}"
-            for u in users
-        )
-        await message.answer(
-            f"<b>👥 Foydalanuvchilar soni: {len(users)}</b>\n\n{user_list}",
-            reply_markup=ADMIN_MARKUP, parse_mode="HTML"
-        )
+        return
+    
+    user_list = "\n".join(
+        f"👤 ID: {u['id']} | @{u['username']} | Oxirgi faol: {u.get('last_active', 'Nomalum')}"
+        for u in users
+    )
+    await message.answer(
+        f"<b>👥 Foydalanuvchilar soni: {len(users)}</b>\n\n{user_list}",
+        reply_markup=ADMIN_MARKUP,
+        parse_mode="HTML"
+    )
 
 @dp.message(lambda msg: msg.text == "📩 Xabar yuborish" and msg.from_user.id == ADMIN_ID)
 async def send_broadcast_start(message: types.Message, state: FSMContext):
-    await message.answer("<b>📩 Foydalanuvchilarga xabar yuborish</b>\n\nYubormoqchi bo‘lgan xabarni kiriting:", parse_mode="HTML")
+    await message.answer(
+        "<b>📩 Foydalanuvchilarga xabar yuborish</b>\n\nYubormoqchi bo‘lgan xabarni kiriting:",
+        parse_mode="HTML"
+    )
     await state.set_state(AdminStates.waiting_for_message)
 
 @dp.message(AdminStates.waiting_for_message)
@@ -376,25 +415,25 @@ async def send_broadcast(message: types.Message, state: FSMContext):
     sent, failed = 0, 0
     broadcast_message = message.text
     
-    print(f"[INFO] Xabar yuborish boshlandi. Jami foydalanuvchilar: {len(users)}")
-    print(f"[INFO] Yuboriladigan xabar: {broadcast_message}")
+    logger.info(f"Xabar yuborish boshlandi. Jami foydalanuvchilar: {len(users)}")
+    logger.info(f"Yuboriladigan xabar: {broadcast_message}")
     
     for user in users:
         user_id = user['id']
-        username = user.get('username', 'Noma’lum')
+        username = user.get('username', 'Nomalum')
         try:
             await bot.send_message(chat_id=user_id, text=broadcast_message, parse_mode="HTML")
             sent += 1
-            print(f"[SUCCESS] Xabar yuborildi: ID={user_id}, Username=@{username}")
+            logger.info(f"Xabar yuborildi: ID={user_id}, Username=@{username}")
         except Exception as e:
             failed += 1
             error_msg = str(e).lower()
-            print(f"[ERROR] Xabar yuborishda xato: ID={user_id}, Xato: {error_msg}")
+            logger.error(f"Xabar yuborishda xato: ID={user_id}, Xato: {error_msg}")
             if "blocked by user" in error_msg or "chat not found" in error_msg:
-                print(f"[WARNING] Foydalanuvchi ro‘yxatdan o‘chirilmoqda: ID={user_id}")
+                logger.warning(f"Foydalanuvchi ro‘yxatdan o‘chirilmoqda: ID={user_id}")
                 users = [u for u in users if u['id'] != user_id]
                 await save_to_json('users.json', users)
-                print(f"[INFO] Foydalanuvchi o‘chirildi: ID={user_id}")
+                logger.info(f"Foydalanuvchi o‘chirildi: ID={user_id}")
     
     result_text = (
         f"<b>📬 Xabar yuborish natijasi:</b>\n"
@@ -403,7 +442,7 @@ async def send_broadcast(message: types.Message, state: FSMContext):
         f"👥 Jami foydalanuvchilar: {len(users)} ta"
     )
     await message.answer(result_text, reply_markup=ADMIN_MARKUP, parse_mode="HTML")
-    print(f"[INFO] Xabar yuborish yakunlandi. Muvaffaqiyatli: {sent}, Xato: {failed}")
+    logger.info(f"Xabar yuborish yakunlandi. Muvaffaqiyatli: {sent}, Xato: {failed}")
     
     await state.clear()
 
@@ -471,7 +510,8 @@ async def start_learning(message: types.Message, state: FSMContext):
     await save_user(message.from_user.id, message.from_user.username)
     await message.answer(
         "<b>📚 O‘quv rejimi</b>\n\nQuyidagilardan birini tanlang:",
-        reply_markup=LEARNING_MENU, parse_mode="HTML"
+        reply_markup=LEARNING_MENU,
+        parse_mode="HTML"
     )
     await state.set_state(LearningStates.learning_menu)
 
@@ -502,7 +542,8 @@ async def quiz_menu_handler(message: types.Message, state: FSMContext):
         await state.update_data(section="Random", available_questions=available_questions, all_questions=all_questions)
         await message.answer(
             f"<b>🎲 Tasodifiy savollar sonini tanlang</b>\n\nJami mavjud: {available_questions} ta",
-            reply_markup=COUNT_MARKUP, parse_mode="HTML"
+            reply_markup=COUNT_MARKUP,
+            parse_mode="HTML"
         )
         await state.set_state(QuizStates.random_questions)
     elif message.text == "↩️ Bosh menyuga":
@@ -561,7 +602,8 @@ async def choose_dict_handler(message: types.Message, state: FSMContext):
             if selected_dict not in DATA["Dictionary"]:
                 await message.answer(
                     f"<b>❗ '{selected_dict}' lug‘ati mavjud emas!</b>\nBoshqa lug‘atni tanlang:",
-                    reply_markup=get_dict_menu(page), parse_mode="HTML"
+                    reply_markup=get_dict_menu(page),
+                    parse_mode="HTML"
                 )
                 return
             await state.update_data(section="Dictionary", selected_dict=selected_dict)
@@ -593,20 +635,23 @@ async def choose_grammar_handler(message: types.Message, state: FSMContext):
             if selected_category not in DATA["Grammar"]:
                 await message.answer(
                     f"<b>❗ '{selected_category}' bo‘limi mavjud emas!</b>\nBoshqa bo‘limni tanlang:",
-                    reply_markup=get_grammar_menu(page), parse_mode="HTML"
+                    reply_markup=get_grammar_menu(page),
+                    parse_mode="HTML"
                 )
                 return
             available_questions = len(DATA["Grammar"].get(selected_category, {}))
             if available_questions == 0:
                 await message.answer(
                     f"<b>❗ '{selected_category}' bo‘limida savollar yo‘q!</b>\nBoshqa bo‘limni tanlang:",
-                    reply_markup=get_grammar_menu(page), parse_mode="HTML"
+                    reply_markup=get_grammar_menu(page),
+                    parse_mode="HTML"
                 )
                 return
             await state.update_data(section="Grammar", selected_category=selected_category, available_questions=available_questions)
             await message.answer(
                 f"<b>🌕 Savollar sonini tanlang</b>\n\nJami mavjud: {available_questions} ta",
-                reply_markup=COUNT_MARKUP, parse_mode="HTML"
+                reply_markup=COUNT_MARKUP,
+                parse_mode="HTML"
             )
             await state.set_state(QuizStates.choosing_count)
         elif message.text == "↩️ Orqaga":
@@ -626,7 +671,8 @@ async def choose_level(message: types.Message, state: FSMContext):
             page = user_data.get('dict_page', 0)
             await message.answer(
                 f"<b>❗ '{selected_dict}' lug‘ati mavjud emas!</b>",
-                reply_markup=get_dict_menu(page), parse_mode="HTML"
+                reply_markup=get_dict_menu(page),
+                parse_mode="HTML"
             )
             await state.set_state(QuizStates.choosing_dict)
             return
@@ -634,13 +680,15 @@ async def choose_level(message: types.Message, state: FSMContext):
         if available_questions == 0:
             await message.answer(
                 f"<b>❗ '{selected_dict}' lug‘atida '{level}' darajasida savollar yo‘q!</b>\nBoshqa darajani tanlang:",
-                reply_markup=LUGAT_LEVELS, parse_mode="HTML"
+                reply_markup=LUGAT_LEVELS,
+                parse_mode="HTML"
             )
             return
         await state.update_data(level=level, available_questions=available_questions)
         await message.answer(
             f"<b>🌕 Savollar sonini tanlang</b>\n\nJami mavjud: {available_questions} ta",
-            reply_markup=COUNT_MARKUP, parse_mode="HTML"
+            reply_markup=COUNT_MARKUP,
+            parse_mode="HTML"
         )
         await state.set_state(QuizStates.choosing_count)
     elif message.text == "↩️ Orqaga":
@@ -703,7 +751,7 @@ async def send_question(message: types.Message, state: FSMContext):
     current = user_data.get('current', 0)
     questions = user_data.get('questions', [])
     section = user_data.get('section', 'Dictionary')
-    level = user_data.get('level', 'Easy') if section == 'Dictionary' else None
+    level = user_data.get('level', 'Easy') if section == "Dictionary" else None
     
     if current >= len(questions):
         await end_test(message, state)
@@ -894,7 +942,8 @@ async def learning_choose_dict(message: types.Message, state: FSMContext):
             if selected_dict not in DATA["Dictionary"]:
                 await message.answer(
                     f"<b>❗ '{selected_dict}' lug‘ati mavjud emas!</b>\nBoshqa lug‘atni tanlang:",
-                    reply_markup=get_dict_menu(page), parse_mode="HTML"
+                    reply_markup=get_dict_menu(page),
+                    parse_mode="HTML"
                 )
                 return
             await state.update_data(section="Dictionary", selected_dict=selected_dict)
@@ -926,14 +975,16 @@ async def learning_choose_grammar(message: types.Message, state: FSMContext):
             if selected_category not in DATA["Grammar"]:
                 await message.answer(
                     f"<b>❗ '{selected_category}' bo‘limi mavjud emas!</b>\nBoshqa bo‘limni tanlang:",
-                    reply_markup=get_grammar_menu(page), parse_mode="HTML"
+                    reply_markup=get_grammar_menu(page),
+                    parse_mode="HTML"
                 )
                 return
             items = list(DATA["Grammar"].get(selected_category, {}).items())
             if not items:
                 await message.answer(
                     f"<b>❗ '{selected_category}' bo‘limida ma’lumot yo‘q!</b>\nBoshqa bo‘limni tanlang:",
-                    reply_markup=get_grammar_menu(page), parse_mode="HTML"
+                    reply_markup=get_grammar_menu(page),
+                    parse_mode="HTML"
                 )
                 return
             await state.update_data(section="Grammar", selected_category=selected_category, items=items, current_page=0)
@@ -956,7 +1007,8 @@ async def learning_choose_level(message: types.Message, state: FSMContext):
             page = user_data.get('dict_page', 0)
             await message.answer(
                 f"<b>❗ '{selected_dict}' lug‘ati mavjud emas!</b>",
-                reply_markup=get_dict_menu(page), parse_mode="HTML"
+                reply_markup=get_dict_menu(page),
+                parse_mode="HTML"
             )
             await state.set_state(LearningStates.choosing_dict)
             return
@@ -964,7 +1016,8 @@ async def learning_choose_level(message: types.Message, state: FSMContext):
         if not items:
             await message.answer(
                 f"<b>❗ '{selected_dict}' lug‘atida '{level}' darajasida so‘zlar yo‘q!</b>\nBoshqa darajani tanlang:",
-                reply_markup=LUGAT_LEVELS, parse_mode="HTML"
+                reply_markup=LUGAT_LEVELS,
+                parse_mode="HTML"
             )
             return
         await state.update_data(level=level, items=items, current_page=0)
@@ -1032,8 +1085,48 @@ async def show_learning_page(message: types.Message, state: FSMContext):
     )
     await state.set_state(LearningStates.showing_items)
 
+# Webhook setup
+async def on_startup(_):
+    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
+    await bot.set_webhook(webhook_url)
+    logger.info(f"Webhook set to {webhook_url}")
+
+async def on_shutdown(_):
+    await bot.delete_webhook()
+    logger.info("Webhook deleted")
+
 async def main():
-    await dp.start_polling(bot)
+    if os.getenv("RENDER"):  # Run as webhook on Render
+        await start_webhook(
+            dispatcher=dp,
+            webhook_path=WEBHOOK_PATH,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            skip_updates=True,
+            host=WEBAPP_HOST,
+            port=WEBAPP_PORT
+        )
+    else:  # Run as polling locally
+        max_retries = 3
+        retry_delay = 5
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Botni ishga tushirish urinishi: {attempt + 1}/{max_retries}")
+                await dp.start_polling(bot)
+                break
+            except TelegramNetworkError as e:
+                logger.error(f"Tarmoq xatosi: {e}, {attempt + 1}/{max_retries} urinish")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.critical("Maksimal urinishlar soni tugadi!")
+                    raise
+            except Exception as e:
+                logger.error(f"Botni ishga tushirishda xato: {e}")
+                raise
+            finally:
+                await bot.session.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
