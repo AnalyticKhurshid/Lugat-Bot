@@ -11,8 +11,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import CommandStart, Command
 from aiogram.exceptions import TelegramNetworkError
-from aiogram.utils.executor import start_webhook
-import aiohttp
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 
 # Logging sozlamalari
 logging.basicConfig(
@@ -1086,26 +1086,31 @@ async def show_learning_page(message: types.Message, state: FSMContext):
     await state.set_state(LearningStates.showing_items)
 
 # Webhook setup
-async def on_startup(_):
+async def on_startup(app):
     webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}{WEBHOOK_PATH}"
     await bot.set_webhook(webhook_url)
     logger.info(f"Webhook set to {webhook_url}")
 
-async def on_shutdown(_):
+async def on_shutdown(app):
     await bot.delete_webhook()
     logger.info("Webhook deleted")
+    await bot.session.close()
 
 async def main():
     if os.getenv("RENDER"):  # Run as webhook on Render
-        await start_webhook(
-            dispatcher=dp,
-            webhook_path=WEBHOOK_PATH,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            skip_updates=True,
-            host=WEBAPP_HOST,
-            port=WEBAPP_PORT
-        )
+        app = web.Application()
+        webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+        webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+        setup_application(app, dp, bot=bot)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, WEBAPP_HOST, WEBAPP_PORT)
+        await site.start()
+        logger.info(f"Webhook server started on {WEBAPP_HOST}:{WEBAPP_PORT}")
+        try:
+            await asyncio.Event().wait()  # Keep running until interrupted
+        finally:
+            await runner.cleanup()
     else:  # Run as polling locally
         max_retries = 3
         retry_delay = 5
